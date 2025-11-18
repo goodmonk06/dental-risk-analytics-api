@@ -10,27 +10,305 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ========================================
+// Core Entities
+// ========================================
+
+model Clinic {
+  id          Int      @id @default(autoincrement())
+  name        String
+  code        String   @unique
+  email       String?
+  phone       String?
+  address     String?
+  city        String?
+  state       String?
+  zipCode     String?
+  country     String   @default("Japan")
+  website     String?
+  settings    Json?    // Operating hours, preferences, etc.
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  dentists    Dentist[]
+  patients    Patient[]
+  appointments Appointment[]
+
+  @@map("clinics")
+}
+
+model Dentist {
+  id            Int      @id @default(autoincrement())
+  clinicId      Int
+  clinic        Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  firstName     String
+  lastName      String
+  email         String   @unique
+  phone         String?
+  licenseNumber String?  @unique
+  specialties   String[] // e.g., ["general", "orthodontics", "endodontics"]
+
+  bio           String?
+  yearsOfExperience Int?
+  education     Json?    // Degrees, certifications
+  availability  Json?    // Weekly schedule
+
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  appointments  Appointment[]
+  treatmentPlans TreatmentPlan[]
+
+  @@map("dentists")
+}
+
 model Patient {
-  id       Int            @id @default(autoincrement())
-  code     String         @unique
-  age      Int
-  gender   String
-  memo     String?
-  analyses RiskAnalysis[]
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  id            Int      @id @default(autoincrement())
+  clinicId      Int?
+  clinic        Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+
+  code          String   @unique
+  firstName     String?
+  lastName      String?
+  dateOfBirth   DateTime?
+  age           Int
+  gender        String
+
+  // Contact Information
+  email         String?
+  phone         String?
+  address       String?
+  city          String?
+  state         String?
+  zipCode       String?
+
+  // Emergency Contact
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  emergencyContactRelation String?
+
+  // Insurance & Medical
+  insuranceProvider String?
+  insuranceId       String?
+  medicalHistory    Json?   // Allergies, conditions, medications
+
+  // Dental History
+  lastVisit     DateTime?
+  nextVisit     DateTime?
+
+  memo          String?
+  tags          String[] // For categorization
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  analyses      RiskAnalysis[]
+  appointments  Appointment[]
+  treatmentPlans TreatmentPlan[]
 
   @@map("patients")
 }
 
 model RiskAnalysis {
-  id        Int      @id @default(autoincrement())
-  patientId Int
-  patient   Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  type      String   // caries, alignment, etc.
-  inputMeta Json     // 画像URLや簡易データ
-  score     Float
-  createdAt DateTime @default(now())
+  id            Int      @id @default(autoincrement())
+  patientId     Int
+  patient       Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
 
+  type          String   // caries, alignment, periodontal, occlusion
+  score         Float    // 0.0 to 1.0
+  confidence    Float?   // Model confidence
+  inputMeta     Json     // Images, data used for analysis
+
+  modelVersion  String?  // Track which model version was used
+  reviewerNotes String?  // Dentist review/override
+  reviewedBy    Int?     // Dentist who reviewed
+  reviewedAt    DateTime?
+
+  createdAt     DateTime @default(now())
+
+  treatmentPlanItems TreatmentPlanItem[]
+
+  @@index([patientId, createdAt])
   @@map("risk_analyses")
+}
+
+// ========================================
+// Appointment & Scheduling
+// ========================================
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum AppointmentType {
+  CHECKUP
+  CLEANING
+  CONSULTATION
+  TREATMENT
+  EMERGENCY
+  FOLLOW_UP
+}
+
+model Appointment {
+  id          Int      @id @default(autoincrement())
+  clinicId    Int
+  clinic      Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  patientId   Int
+  patient     Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  dentistId   Int
+  dentist     Dentist  @relation(fields: [dentistId], references: [id], onDelete: Cascade)
+
+  scheduledAt DateTime
+  duration    Int      @default(30) // minutes
+
+  type        AppointmentType @default(CHECKUP)
+  status      AppointmentStatus @default(SCHEDULED)
+
+  reason      String?
+  notes       String?
+  internalNotes String? // Private notes for staff
+
+  completedAt DateTime?
+  cancelledAt DateTime?
+  cancellationReason String?
+
+  reminderSent Boolean @default(false)
+  reminderSentAt DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([clinicId, scheduledAt])
+  @@index([patientId, scheduledAt])
+  @@index([dentistId, scheduledAt])
+  @@map("appointments")
+}
+
+// ========================================
+// Treatment Planning
+// ========================================
+
+enum TreatmentPlanStatus {
+  DRAFT
+  PROPOSED
+  ACCEPTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model TreatmentPlan {
+  id          Int      @id @default(autoincrement())
+  patientId   Int
+  patient     Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  dentistId   Int
+  dentist     Dentist  @relation(fields: [dentistId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  status      TreatmentPlanStatus @default(DRAFT)
+
+  priority    String   @default("medium") // low, medium, high, urgent
+
+  estimatedCost    Float?
+  estimatedDuration Int? // in days
+
+  startDate   DateTime?
+  endDate     DateTime?
+
+  proposedAt  DateTime?
+  acceptedAt  DateTime?
+  completedAt DateTime?
+
+  notes       String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items       TreatmentPlanItem[]
+
+  @@index([patientId, status])
+  @@map("treatment_plans")
+}
+
+enum TreatmentItemStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+}
+
+model TreatmentPlanItem {
+  id          Int      @id @default(autoincrement())
+  planId      Int
+  plan        TreatmentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  analysisId  Int?
+  analysis    RiskAnalysis? @relation(fields: [analysisId], references: [id], onDelete: SetNull)
+
+  title       String
+  description String?
+  category    String   // e.g., "preventive", "restorative", "cosmetic"
+
+  status      TreatmentItemStatus @default(PENDING)
+  priority    Int      @default(0) // Order of treatment
+
+  estimatedCost    Float?
+  actualCost       Float?
+  estimatedDuration Int? // in minutes
+
+  scheduledDate DateTime?
+  completedDate DateTime?
+
+  notes       String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([planId, priority])
+  @@map("treatment_plan_items")
+}
+
+// ========================================
+// Audit & Tracking
+// ========================================
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  VIEW
+  EXPORT
+}
+
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+
+  entityType  String   // "Patient", "Appointment", etc.
+  entityId    Int
+  action      AuditAction
+
+  userId      Int?     // Who performed the action (future: link to User model)
+  userName    String?  // Cached username
+
+  changes     Json?    // Before/after snapshot
+  metadata    Json?    // Request IP, user agent, etc.
+
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("audit_logs")
 }
