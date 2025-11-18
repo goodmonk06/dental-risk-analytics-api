@@ -1,0 +1,36 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Patient {
+  id       Int            @id @default(autoincrement())
+  code     String         @unique
+  age      Int
+  gender   String
+  memo     String?
+  analyses RiskAnalysis[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@map("patients")
+}
+
+model RiskAnalysis {
+  id        Int      @id @default(autoincrement())
+  patientId Int
+  patient   Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  type      String   // caries, alignment, etc.
+  inputMeta Json     // 画像URLや簡易データ
+  score     Float
+  createdAt DateTime @default(now())
+
+  @@map("risk_analyses")
+}
