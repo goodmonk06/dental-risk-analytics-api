@@ -1,12 +1,25 @@
 import Fastify from 'fastify';
+import {
+  serializerCompiler,
+  validatorCompiler,
+  ZodTypeProvider,
+} from 'fastify-type-provider-zod';
 import { config } from './config';
 import { createModelClient } from './services/modelClient';
 import { patientRoutes } from './routes/patients';
+import { errorHandler } from './lib/errors';
 import prisma from './db';
 
 const fastify = Fastify({
   logger: true,
-});
+}).withTypeProvider<ZodTypeProvider>();
+
+// Zodバリデーター設定
+fastify.setValidatorCompiler(validatorCompiler);
+fastify.setSerializerCompiler(serializerCompiler);
+
+// エラーハンドラ設定
+fastify.setErrorHandler(errorHandler);
 
 // モデルクライアントをfastifyインスタンスに登録
 const modelClient = createModelClient({

@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:16-alpine
+    container_name: dental-risk-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: dental_user
+      POSTGRES_PASSWORD: dental_pass
+      POSTGRES_DB: dental_risk_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dental_user -d dental_risk_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # API Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dental-risk-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://dental_user:dental_pass@db:5432/dental_risk_db?schema=public
+      PORT: 3000
+      HOST: 0.0.0.0
+      MODEL_SERVER_URL: http://localhost:8000
+      NODE_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "npx prisma migrate deploy && node dist/index.js"
+
+volumes:
+  postgres_data:
+    driver: local

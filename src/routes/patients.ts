@@ -1,59 +1,50 @@
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyInstance } from 'fastify';
+import { ZodTypeProvider } from 'fastify-type-provider-zod';
 import prisma from '../db';
-
-interface CreatePatientBody {
-  code: string;
-  age: number;
-  gender: string;
-  memo?: string;
-}
-
-interface AnalyzeRequestBody {
-  type: string;
-  parameters: {
-    imageUrl?: string;
-    data?: Record<string, any>;
-  };
-}
+import {
+  createPatientSchema,
+  updatePatientSchema,
+  patientIdSchema,
+  analyzeRequestSchema,
+} from '../schemas/patient.schema';
+import { NotFoundError } from '../lib/errors';
 
 export async function patientRoutes(fastify: FastifyInstance) {
+  const server = fastify.withTypeProvider<ZodTypeProvider>();
+
   // POST /patients - 患者を新規作成
-  fastify.post<{ Body: CreatePatientBody }>(
+  server.post(
     '/patients',
-    async (request: FastifyRequest<{ Body: CreatePatientBody }>, reply: FastifyReply) => {
-      try {
-        const { code, age, gender, memo } = request.body;
+    {
+      schema: {
+        body: createPatientSchema,
+        response: {
+          201: createPatientSchema.extend({
+            id: createPatientSchema.shape.code.transform(Number),
+            createdAt: createPatientSchema.shape.code,
+            updatedAt: createPatientSchema.shape.code,
+          }),
+        },
+      },
+    },
+    async (request, reply) => {
+      const { code, age, gender, memo } = request.body;
 
-        // バリデーション
-        if (!code || !age || !gender) {
-          return reply.code(400).send({
-            error: 'code, age, gender are required',
-          });
-        }
+      const patient = await prisma.patient.create({
+        data: {
+          code,
+          age,
+          gender,
+          memo,
+        },
+      });
 
-        const patient = await prisma.patient.create({
-          data: {
-            code,
-            age,
-            gender,
-            memo,
-          },
-        });
-
-        return reply.code(201).send(patient);
-      } catch (error: any) {
-        if (error.code === 'P2002') {
-          return reply.code(409).send({
-            error: 'Patient code already exists',
-          });
-        }
-        throw error;
-      }
+      return reply.code(201).send(patient);
     }
   );
 
   // GET /patients - 患者一覧を取得
-  fastify.get('/patients', async (request, reply) => {
+  server.get('/patients', async (request, reply) => {
     const patients = await prisma.patient.findMany({
       orderBy: {
         createdAt: 'desc',
@@ -64,14 +55,15 @@ export async function patientRoutes(fastify: FastifyInstance) {
   });
 
   // GET /patients/:id - 特定の患者を取得
-  fastify.get<{ Params: { id: string } }>(
+  server.get(
     '/patients/:id',
-    async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-      const patientId = parseInt(request.params.id, 10);
-
-      if (isNaN(patientId)) {
-        return reply.code(400).send({ error: 'Invalid patient ID' });
-      }
+    {
+      schema: {
+        params: patientIdSchema,
+      },
+    },
+    async (request, reply) => {
+      const { id: patientId } = request.params;
 
       const patient = await prisma.patient.findUnique({
         where: { id: patientId },
@@ -85,22 +77,64 @@ export async function patientRoutes(fastify: FastifyInstance) {
       });
 
       if (!patient) {
-        return reply.code(404).send({ error: 'Patient not found' });
+        throw new NotFoundError('Patient');
       }
 
       return reply.send(patient);
     }
   );
 
-  // GET /patients/:id/analyses - 患者の分析履歴を取得
-  fastify.get<{ Params: { id: string } }>(
-    '/patients/:id/analyses',
-    async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-      const patientId = parseInt(request.params.id, 10);
+  // PUT /patients/:id - 患者情報を更新
+  server.put(
+    '/patients/:id',
+    {
+      schema: {
+        params: patientIdSchema,
+        body: updatePatientSchema,
+      },
+    },
+    async (request, reply) => {
+      const { id: patientId } = request.params;
+      const updateData = request.body;
 
-      if (isNaN(patientId)) {
-        return reply.code(400).send({ error: 'Invalid patient ID' });
-      }
+      const patient = await prisma.patient.update({
+        where: { id: patientId },
+        data: updateData,
+      });
+
+      return reply.send(patient);
+    }
+  );
+
+  // DELETE /patients/:id - 患者を削除
+  server.delete(
+    '/patients/:id',
+    {
+      schema: {
+        params: patientIdSchema,
+      },
+    },
+    async (request, reply) => {
+      const { id: patientId } = request.params;
+
+      await prisma.patient.delete({
+        where: { id: patientId },
+      });
+
+      return reply.code(204).send();
+    }
+  );
+
+  // GET /patients/:id/analyses - 患者の分析履歴を取得
+  server.get(
+    '/patients/:id/analyses',
+    {
+      schema: {
+        params: patientIdSchema,
+      },
+    },
+    async (request, reply) => {
+      const { id: patientId } = request.params;
 
       const analyses = await prisma.riskAnalysis.findMany({
         where: { patientId },
@@ -114,22 +148,17 @@ export async function patientRoutes(fastify: FastifyInstance) {
   );
 
   // POST /patients/:id/analyze - リスク分析を実行
-  fastify.post<{ Params: { id: string }; Body: AnalyzeRequestBody }>(
+  server.post(
     '/patients/:id/analyze',
-    async (
-      request: FastifyRequest<{ Params: { id: string }; Body: AnalyzeRequestBody }>,
-      reply: FastifyReply
-    ) => {
-      const patientId = parseInt(request.params.id, 10);
+    {
+      schema: {
+        params: patientIdSchema,
+        body: analyzeRequestSchema,
+      },
+    },
+    async (request, reply) => {
+      const { id: patientId } = request.params;
       const { type, parameters } = request.body;
-
-      if (isNaN(patientId)) {
-        return reply.code(400).send({ error: 'Invalid patient ID' });
-      }
-
-      if (!type) {
-        return reply.code(400).send({ error: 'type is required' });
-      }
 
       // 患者の存在確認
       const patient = await prisma.patient.findUnique({
@@ -137,7 +166,7 @@ export async function patientRoutes(fastify: FastifyInstance) {
       });
 
       if (!patient) {
-        return reply.code(404).send({ error: 'Patient not found' });
+        throw new NotFoundError('Patient');
       }
 
       // モデルサーバにリクエスト
